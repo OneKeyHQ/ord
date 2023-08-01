@@ -141,13 +141,17 @@ impl Server {
     println!("run server ......");
 
     Runtime::new()?.block_on(async {
-      let clone = index.clone();
-      thread::spawn(move || loop {
-        if let Err(error) = clone.update() {
+      let index_clone = index.clone();
+      let index_thread = thread::spawn(move || loop {
+        if SHUTTING_DOWN.load(atomic::Ordering::Relaxed) {
+          break;
+        }
+        if let Err(error) = index_clone.update() {
           log::warn!("{error}");
         }
         thread::sleep(Duration::from_millis(5000));
       });
+      INDEXER.lock().unwrap().replace(index_thread);
 
       let config = options.load_config()?;
       let acme_domains = self.acme_domains()?;
@@ -402,7 +406,7 @@ impl Server {
         sat,
         satpoint,
         blocktime: index.block_time(sat.height())?,
-        inscription: index.get_inscription_id_by_sat(sat)?,
+        inscriptions: index.get_inscription_ids_by_sat(sat)?,
       }
       .page(page_config, index.has_sat_index()?),
     )
@@ -473,7 +477,7 @@ impl Server {
 
       TxOut {
         value,
-        script_pubkey: Script::new(),
+        script_pubkey: ScriptBuf::new(),
       }
     } else {
       index
@@ -1048,7 +1052,7 @@ mod tests {
     fn new_with_regtest() -> Self {
       Self::new_server(
         test_bitcoincore_rpc::builder()
-          .network(bitcoin::Network::Regtest)
+          .network(bitcoin::network::constants::Network::Regtest)
           .build(),
         None,
         &["--chain", "regtest"],
